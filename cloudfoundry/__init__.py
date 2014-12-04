@@ -3,7 +3,6 @@ import urllib
 from urlparse import urljoin
 import requests
 from cloudfoundry.apps import CloudFoundryApp
-from cloudfoundry.services import CloudFoundryService
 from cloudfoundry.organizations import CloudFoundryOrg
 from cloudfoundry.spaces import CloudFoundrySpace
 import os
