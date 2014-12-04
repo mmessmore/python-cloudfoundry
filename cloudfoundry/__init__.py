@@ -25,7 +25,7 @@ class CloudFoundryInterface(object):
 
 
 
-    def __init__(self, target, username=None, password=None, store_token=False, debug=False):
+    def __init__(self, target, username=None, password=None, debug=False):
         self.apps = None
         self.orgs = None
         self.spaces = None
@@ -36,19 +36,10 @@ class CloudFoundryInterface(object):
         self.password = password
         self.token = None
         self.auth_endpoint = None
-        self.store_token = store_token
-        self.debug = debug
-        self.token_file = os.path.expanduser(self.token_file)
 
-        if self.store_token:
-            if os.path.exists(self.token_file):
-                with open(self.token_file) as fobj:
-                    try:
-                        data = json.load(fobj)
-                        if self.target in data:
-                            self.token = data[self.target]
-                    except ValueError:  # Invalid JSON in file, probably empty
-                        pass
+        self.debug = debug
+
+
 
     def auth_args(self, authentication_required, login_mode=False):
         headers = {'Accept':'application/json'}
@@ -83,7 +74,7 @@ class CloudFoundryInterface(object):
 
         response = request_type(full_url, verify=verify, data=data, **self.auth_args(authentication_required,login_mode=login_mode))
 
-        if response.status_code == 200 or response.status_code == 201:
+        if response.status_code == 200 or response.status_code == 201 or response.status_code == 204:
             return response
         elif response.status_code == 403:
             if not authentication_required:
@@ -96,19 +87,25 @@ class CloudFoundryInterface(object):
         else:
             raise CloudFoundryException("HTTP {} - {}".format(response.status_code, response.text))
 
-    def _get_json_or_exception(self, *args, **kwargs):
-        return self._request(*args, **kwargs).json()
+    def _get_or_exception(self, url, json=True, **kwargs):
+        if json:
+            return self._request(url, **kwargs).json()
+        return self._request(url, **kwargs).text
 
-    def _post_json_or_exception(self, *args, **kwargs):
-        return self._request(*args, request_type=requests.post, **kwargs).json()
+    def _post_or_exception(self, url, json=True, **kwargs):
+        if json:
+            return self._request(url, request_type=requests.post, **kwargs).json()
+        return self._request(url, request_type=requests.post, **kwargs).text
 
-    def _get_true_or_exception(self, *args, **kwargs):
-        self._request(*args, **kwargs)
-        return True
+    def _delete_or_exception(self, url, json=True, **kwargs):
+        if json:
+            return self._request(url, request_type=requests.delete, **kwargs).json()
+        return self._request(url, request_type=requests.delete, **kwargs).text
+
 
     def _get_auth_endpoint(self):
 
-        response = self._get_json_or_exception(
+        response = self._get_or_exception(
             "v2/info",
             request_type=requests.get,
             authentication_required=False
@@ -130,7 +127,7 @@ class CloudFoundryInterface(object):
 
     def login(self,update_token=False):
 
-        response = self._get_json_or_exception(
+        response = self._get_or_exception(
             "oauth/token",
             request_type=requests.post,
             authentication_required=False,
@@ -146,18 +143,6 @@ class CloudFoundryInterface(object):
 
         self.token = response['access_token']
 
-        if self.store_token:
-            data = {self.target: self.token}
-            if os.path.exists(self.token_file):
-                try:
-                    with open(self.token_file) as token_file:
-                        data = json.loads(token_file.read())
-                        data[self.target] = self.token
-                except ValueError:  # Invalid JSON in file, probably empty
-                    pass
-            with open(self.token_file, 'w') as token_file:
-                json.dump(data, token_file)
-
         self.expires_at = int(response['expires_in']) + time.time()
         if not update_token:
             self.refresh()
@@ -171,7 +156,7 @@ class CloudFoundryInterface(object):
         self.spaces = self._get_spaces()
 
     def _get_orgs(self):
-        raw = self._get_json_or_exception("v2/organizations")['resources']
+        raw = self._get_or_exception("v2/organizations")['resources']
         orgs = {}
         for org in raw:
             org_data = org['entity']
@@ -181,7 +166,7 @@ class CloudFoundryInterface(object):
         return orgs
 
     def _get_spaces(self):
-        raw = self._get_json_or_exception("v2/spaces")['resources']
+        raw = self._get_or_exception("v2/spaces")['resources']
         spaces = {}
         for space in raw:
             space_data = space['entity']
@@ -191,7 +176,7 @@ class CloudFoundryInterface(object):
         return spaces
 
     def _get_apps(self):
-        raw = self._get_json_or_exception("v2/apps")['resources']
+        raw = self._get_or_exception("v2/apps")['resources']
         apps = {}
         for app in raw:
             app_data = app['entity']
@@ -216,10 +201,16 @@ class CloudFoundryInterface(object):
     def create_app(self,name, space_guid):
         logging.warn("Creating new app in space {}".format(space_guid))
 
-        response = self._post_json_or_exception("v2/apps",data={'name':name, 'space_guid':space_guid})
+        response = self._post_or_exception("v2/apps",data={'name':name, 'space_guid':space_guid})
         metadata = response['metadata']
         app_data = response['entity']
         app = CloudFoundryApp.from_dict(metadata,app_data)
         self.apps[app.guid] = app
         return app
 
+
+    def delete_app(self,guid):
+        logging.critical("Deleting App with GUID: {}".format(guid))
+
+        response = self._delete_or_exception("v2/apps/{}".format(guid),json=False)
+        self.apps.pop(guid,None)

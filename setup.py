@@ -4,12 +4,12 @@ from setuptools import find_packages
 from distutils.core import setup
 
 setup(
-    author=u'Kristian Øllegaard',
-    author_email='kristian@oellegaard.com',
-    name='python-cloudfoundry',
-    description='Python interface to CloudFoundry',
-    version="0.3",
-    url='http://www.github.com/KristianOellegaard/python-cloudfoundry/',
+    author=u'Matt Cowger',
+    author_email='matt@cowger.us',
+    name='python-cloudfoundry2',
+    description='Python interface to CloudFoundry v2 API',
+    version="0.1",
+    url='https://github.com/mcowger/python-cloudfoundry',
     license='MIT License',
     packages = find_packages(),
     classifiers=[
