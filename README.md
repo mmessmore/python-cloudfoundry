@@ -1,4 +1,4 @@
-# Python-Cloudfoundry
+# Python-Cloudfoundry2
 
 Sample usage:
 ```python
@@ -15,3 +15,4 @@ pprint(new_app)
 cfi.delete_app(new_app.guid)
 ```
 
+Originally based on python-cloudfoundry from (https://github.com/KristianOellegaard/python-cloudfoundry), bit updates to support v2 and other changes/additions.
