@@ -25,6 +25,7 @@ Originally based on python-cloudfoundry from (https://github.com/KristianOellega
 Currently implemented are models of Apps, Spaces and Organizations.  Additionally, create and delete of apps is supported.
 
 TODO (in approx. order):
+* Tests!
 * Modeling and changes for routes
 * Uploading bits for apps
 * modeling for buildpacks
