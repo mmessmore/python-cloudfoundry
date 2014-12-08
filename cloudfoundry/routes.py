@@ -46,4 +46,3 @@ class CloudFoundryRoute(object):
     @staticmethod
     def from_dict(metadata, dict):
         return CloudFoundryRoute(metadata=metadata, **dict)
-
