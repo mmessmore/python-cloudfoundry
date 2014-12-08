@@ -1,6 +1,7 @@
 import logging
 from pprint import pformat, pprint
 
+
 class CloudFoundryApp(object):
 
     @classmethod
@@ -86,4 +87,5 @@ class CloudFoundryApp(object):
     @staticmethod
     def from_dict(metadata, dict):
         return CloudFoundryApp(metadata=metadata, **dict)
+
 

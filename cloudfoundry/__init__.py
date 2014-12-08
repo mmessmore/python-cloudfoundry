@@ -5,7 +5,10 @@ import requests
 from cloudfoundry.apps import CloudFoundryApp
 from cloudfoundry.organizations import CloudFoundryOrg
 from cloudfoundry.spaces import CloudFoundrySpace
-import os
+from cloudfoundry.routes import CloudFoundryRoute
+from cloudfoundry.domains import CloudFoundryDomain
+from utils import create_bits_zip
+from collections import OrderedDict
 import logging
 import time
 from pprint import pprint,pformat
@@ -28,6 +31,8 @@ class CloudFoundryInterface(object):
         self.apps = None
         self.orgs = None
         self.spaces = None
+        self.routes = None
+        self.domains = None
         self.expires_at = None
 
         self.target = target
@@ -58,22 +63,22 @@ class CloudFoundryInterface(object):
         logging.debug("Returning Final Headers: {}".format(headers))
         return {'headers': headers}
 
-    def _request(self, url, request_type=requests.get, authentication_required=True, data=None, host_override=None, verify=False, login_mode=False):
+    def _request(self, url, request_type=requests.get, authentication_required=True, data=None, host_override=None, verify=False, login_mode=False, raw_data = False, files=None):
 
         if not self.live and authentication_required:
             raise CloudFoundryException("Auth Required and Not Logged In")
 
         logging.debug("Login Mode: {}".format(login_mode))
-        if data and not login_mode:
+        if data and not (login_mode or raw_data):
             data = json.dumps(data)
         full_url = urljoin(self.target, url)
         if host_override:
             full_url = urljoin(host_override, url)
             logging.info("Setting URL with host override: {}".format(full_url))
 
-        response = request_type(full_url, verify=verify, data=data, **self.auth_args(authentication_required,login_mode=login_mode))
+        response = request_type(full_url, verify=verify, data=data, files=files, **self.auth_args(authentication_required,login_mode=login_mode))
 
-        if response.status_code == 200 or response.status_code == 201 or response.status_code == 204:
+        if response.status_code in range(200,299):
             return response
         elif response.status_code == 403:
             if not authentication_required:
@@ -101,6 +106,10 @@ class CloudFoundryInterface(object):
             return self._request(url, request_type=requests.delete, **kwargs).json()
         return self._request(url, request_type=requests.delete, **kwargs).text
 
+    def _put_or_exception(self, url, json=True, files=None, data=None, **kwargs):
+        if json:
+            return self._request(url, request_type=requests.put, files=files, data=data, **kwargs).json()
+        return self._request(url, request_type=requests.put, files=files, data=data, **kwargs).text
 
     def _get_auth_endpoint(self):
 
@@ -144,15 +153,17 @@ class CloudFoundryInterface(object):
 
         self.expires_at = int(response['expires_in']) + time.time()
         if not update_token:
-            self.refresh()
+            self.refresh_all()
 
 
-    def refresh(self):
+    def refresh_all(self):
         if not self.live:
             self.login()
         self.apps = self._get_apps()
         self.orgs = self._get_orgs()
         self.spaces = self._get_spaces()
+        self.routes = self._get_routes()
+        self.domains = self._get_domains()
 
     def _get_orgs(self):
         raw = self._get_or_exception("v2/organizations")['resources']
@@ -174,6 +185,26 @@ class CloudFoundryInterface(object):
             spaces[current_org.guid] = current_org
         return spaces
 
+    def _get_domains(self):
+        domains = {}
+        shared_raw = self._get_or_exception("v2/shared_domains")['resources']
+        for domain in shared_raw:
+            domain_data = domain['entity']
+            metadata = domain['metadata']
+            current_domain = CloudFoundryDomain.from_dict(metadata,domain_data)
+            domains[current_domain.guid] = current_domain
+
+        private_raw = self._get_or_exception("v2/private_domains")['resources']
+        for domain in private_raw:
+            domain_data = domain['entity']
+            metadata = domain['metadata']
+            current_domain = CloudFoundryDomain.from_dict(metadata,domain_data)
+            domains[current_domain.guid] = current_domain
+
+        return domains
+
+
+
     def _get_apps(self):
         raw = self._get_or_exception("v2/apps")['resources']
         apps = {}
@@ -183,6 +214,17 @@ class CloudFoundryInterface(object):
             current_app = CloudFoundryApp.from_dict(metadata,app_data)
             apps[current_app.guid] = current_app
         return apps
+
+    def _get_routes(self):
+        raw = self._get_or_exception("v2/routes")['resources']
+        routes = {}
+        for route in raw:
+            route_data = route['entity']
+            metadata = route['metadata']
+            current_route = CloudFoundryRoute.from_dict(metadata,route_data)
+            routes[current_route.guid] = current_route
+        return routes
+
 
     def get_app(self,guid):
         if not self.live:
@@ -213,3 +255,32 @@ class CloudFoundryInterface(object):
 
         response = self._delete_or_exception("v2/apps/{}".format(guid),json=False)
         self.apps.pop(guid,None)
+
+    def upload_bits(self,app,path):
+        assert isinstance(app, CloudFoundryApp)
+        zipdata = create_bits_zip(path)
+        files_data = OrderedDict()
+        files_data['resources'] = (None,'[]')
+        files_data['application'] = zipdata.getvalue()
+
+        logging.debug(dict(files_data))
+
+        self._put_or_exception("v2/apps/{}/bits".format(app.guid),
+                               files=files_data,
+                               raw_data = True
+                               )
+
+    def start_app(self,app):
+        self.update_app(app,{'STATE':'STARTED'})
+
+    def update_app(self,app,changes):
+        assert isinstance(app, CloudFoundryApp)
+        assert isinstance(changes,dict)
+        self._put_or_exception("/v2/apps/{}?async=true".format(app.guid),
+            data=changes,
+        )
+        self.apps = self._get_apps()
+
+
+
+
