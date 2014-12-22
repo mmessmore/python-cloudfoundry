@@ -23,68 +23,65 @@ class CloudFoundryAuthenticationException(CloudFoundryException):
 
 
 class CloudFoundryInterface(object):
-    token_file = '~/.vmc_token'
-
-
 
     def __init__(self, target, username=None, password=None, debug=False):
-        self.apps = None
-        self.orgs = None
-        self.spaces = None
-        self.routes = None
-        self.domains = None
-        self.expires_at = None
+        self._apps = None
+        self._orgs = None
+        self._spaces = None
+        self._routes = None
+        self._domains = None
+        self._expires_at = None
 
-        self.target = target
-        self.username = username
-        self.password = password
-        self.token = None
-        self.auth_endpoint = None
+        self._target = target
+        self._username = username
+        self._password = password
+        self._token = None
+        self._auth_endpoint = None
 
-        self.debug = debug
+        self._debug = debug
+
+    def login(self):
+        logging.info("Logging in to CF API {}".format(self._target))
+
+        auth_endpoint = requests.get("{}/{}".format(self._target,"v2/info"), verify=True).json()['authorization_endpoint']
+
+        login_data={
+                "grant_type": "password",
+                "password": self._password,
+                "scope": "",
+                "username": self._username
+        }
+        headers =  {"Authorization": "Basic Y2Y6", "Accept": "application/json"}
+        response = requests.post("{}/{}".format(auth_endpoint,"oauth/token"), data=login_data, headers=headers, verify=True).json()
+        self._token = response['access_token']
+        self._expires_at = int(response['expires_in']) + time.time()
+
+        self._session = requests.Session()
+        self._session.headers.update(self._auth_args())
 
 
-    def auth_args(self, authentication_required, login_mode=False):
+        return self._token
+
+    def _auth_args(self):
         headers = {'Accept':'application/json'}
-        headers.update({'Authorization': 'bearer {}'.format(self.token)})
-        logging.debug("Basic Headers: {}".format(headers))
-        if login_mode: # we have a special Auth header when we are logging in, with a static auth code
-            headers.update({'Authorization': 'Basic Y2Y6'})
-        if not authentication_required and not self.token:
-            # return {'headers': headers}
-            pass
-        elif not self.token and self.store_token:  # Ignore, will request new token afterwards!
-            # return {'headers': headers}
-            pass
-        elif not self.token:
-            raise CloudFoundryAuthenticationException("Please login before using this function")
-
+        headers.update({'Authorization': 'bearer {}'.format(self._token)})
         logging.debug("Returning Final Headers: {}".format(headers))
-        return {'headers': headers}
+        return headers
 
-    def _request(self, url, request_type=requests.get, authentication_required=True, data=None, host_override=None, verify=False, login_mode=False, raw_data = False, files=None):
+    def _request(self, url, request_type=requests.get, data=None, verify=True, raw_data = False, files=None):
 
-        if not self.live and authentication_required:
+        if not self.live:
             raise CloudFoundryException("Auth Required and Not Logged In")
 
-        logging.debug("Login Mode: {}".format(login_mode))
-        if data and not (login_mode or raw_data):
-            data = json.dumps(data)
-        full_url = urljoin(self.target, url)
-        if host_override:
-            full_url = urljoin(host_override, url)
-            logging.info("Setting URL with host override: {}".format(full_url))
 
-        response = request_type(full_url, verify=verify, data=data, files=files, **self.auth_args(authentication_required,login_mode=login_mode))
+        if data and not raw_data:
+            data = json.dumps(data)
+        full_url = urljoin(self._target, url)
+
+        response = self._session.request(request_type.__name__, full_url, verify=verify, data=data, files=files)
 
         if response.status_code in range(200,299):
             return response
-        elif response.status_code == 403:
-            if not authentication_required:
-                raise CloudFoundryAuthenticationException(response.text)
-            else:
-                self.login()
-                return self._request(url, request_type, authentication_required=False, data=data)
         elif response.status_code == 404:
             raise CloudFoundryException("HTTP {} - {}".format(response.status_code, response.text))
         else:
@@ -119,61 +116,41 @@ class CloudFoundryInterface(object):
             return self._request(url, request_type=requests.put, files=files, data=data, **kwargs).json()
         return self._request(url, request_type=requests.put, files=files, data=data, **kwargs).text
 
-    def _get_auth_endpoint(self):
-
-        response = self._get_or_exception(
-            "v2/info",
-            request_type=requests.get,
-            authentication_required=False
-        )
-
-
-        # logging.debug(response)
-        self.auth_endpoint = response['authorization_endpoint']
-        logging.debug("Setting auth endpoint as {}".format(self.auth_endpoint))
-
-        return self.auth_endpoint
 
     @property
     def live(self):
         current_time = time.time()
-        if current_time > self.expires_at:
+        if current_time > self._expires_at:
             return False
         return True
 
-    def login(self,update_token=False):
-        logging.info("Logging in to CF API {}".format(self.target))
-        response = self._get_or_exception(
-            "oauth/token",
-            request_type=requests.post,
-            authentication_required=False,
-            host_override=self._get_auth_endpoint(),
-            login_mode=True,
-            data={
-                "grant_type": "password",
-                "password": self.password,
-                "scope": "",
-                "username": self.username
-            }
-        )
+    @property
+    def apps(self):
+        self._update_apps()
+        return self._apps
 
-        self.token = response['access_token']
+    @property
+    def orgs(self):
+        self._update_orgs()
+        return self._orgs
 
-        self.expires_at = int(response['expires_in']) + time.time()
-        if not update_token:
-            self.refresh_all()
+    @property
+    def spaces(self):
+        self._update_spaces()
+        return self._spaces
 
-    def refresh_all(self):
-        logging.info("Refreshing all data as user {}".format(self.username))
-        if not self.live:
-            self.login()
-        self.apps = self._get_apps()
-        self.orgs = self._get_orgs()
-        self.spaces = self._get_spaces()
-        self.routes = self._get_routes()
-        self.domains = self._get_domains()
+    @property
+    def routes(self):
+        self._update_routes()
+        return self._routes
 
-    def _get_orgs(self):
+    @property
+    def domains(self):
+        self._update_domains()
+        return self._domains
+
+
+    def _update_orgs(self):
         logging.info("Updating all orgs as user {}".format(self.username))
         raw = self._get_or_exception("v2/organizations")['resources']
         orgs = {}
@@ -182,10 +159,10 @@ class CloudFoundryInterface(object):
             metadata = org['metadata']
             current_org = CloudFoundryOrg.from_dict(metadata,org_data)
             orgs[current_org.guid] = current_org
-        return orgs
+        self._orgs = orgs
 
-    def _get_spaces(self):
-        logging.info("Updating all spaces as user {}".format(self.username))
+    def _update_spaces(self):
+        logging.info("Updating all spaces as user {}".format(self._username))
         raw = self._get_or_exception("v2/spaces")['resources']
         spaces = {}
         for space in raw:
@@ -193,10 +170,10 @@ class CloudFoundryInterface(object):
             metadata = space['metadata']
             current_org = CloudFoundrySpace.from_dict(metadata,space_data)
             spaces[current_org.guid] = current_org
-        return spaces
+        self._spaces = spaces
 
-    def _get_domains(self):
-        logging.info("Updating all domains as user {}".format(self.username))
+    def _update_domains(self):
+        logging.info("Updating all domains as user {}".format(self._username))
         domains = {}
         shared_raw = self._get_or_exception("v2/shared_domains")['resources']
         for domain in shared_raw:
@@ -212,10 +189,10 @@ class CloudFoundryInterface(object):
             current_domain = CloudFoundryDomain.from_dict(metadata,domain_data)
             domains[current_domain.guid] = current_domain
 
-        return domains
+        self._domains = domains
 
-    def _get_apps(self):
-        logging.info("Updating all app as user {}".format(self.username))
+    def _update_apps(self):
+        logging.info("Updating all app as user {}".format(self._username))
         raw = self._get_or_exception("v2/apps")['resources']
         apps = {}
         for app in raw:
@@ -223,10 +200,10 @@ class CloudFoundryInterface(object):
             metadata = app['metadata']
             current_app = CloudFoundryApp.from_dict(metadata,app_data)
             apps[current_app.guid] = current_app
-        return apps
+        self._apps = apps
 
-    def _get_routes(self):
-        logging.info("Updating all routes as user {}".format(self.username))
+    def _update_routes(self):
+        logging.info("Updating all routes as user {}".format(self._username))
         raw = self._get_or_exception("v2/routes")['resources']
         routes = {}
         for route in raw:
@@ -234,37 +211,41 @@ class CloudFoundryInterface(object):
             metadata = route['metadata']
             current_route = CloudFoundryRoute.from_dict(metadata,route_data)
             routes[current_route.guid] = current_route
-        return routes
+        self._routes = routes
 
     def get_app(self,guid):
-        if not self.live:
-            self.login()
+
+        self._update_apps()
         if guid in self.apps.keys():
             return self.apps[guid]
         return None
 
     def get_app_by_name(self,name):
+        self._update_apps()
         for app in self.apps.values():
             if app.name == name:
                 return app
         return None
 
     def get_space_by_name(self,name):
+        self._update_spaces()
         for space in self.spaces.values():
             if space.name == name:
                 return space
         return None
 
     def get_domain_by_name(self,name):
+        self._update_domains()
         for domain in self.domains.values():
             if domain.name == name:
                 return domain
         return None
 
     def get_route_by_name(self,name):
+        self._update_routes()
         for route in self.routes.values():
             if route.host == name:
-                return host
+                return route
         return None
 
     def create_app(self,name, space_guid):
@@ -274,15 +255,15 @@ class CloudFoundryInterface(object):
         metadata = response['metadata']
         app_data = response['entity']
         app = CloudFoundryApp.from_dict(metadata,app_data)
-        self.apps[app.guid] = app
+        self._apps[app.guid] = app
         return app
 
     def delete_app(self,app):
         assert isinstance(app,CloudFoundryApp)
         logging.critical("Deleting App with GUID: {}".format(app.guid))
 
-        response = self._delete_or_exception("v2/apps/{}".format(app.guid),json=False)
-        self.apps.pop(guid,None)
+        self._delete_or_exception("v2/apps/{}".format(app.guid),json=False)
+        self._apps.pop(guid,None)
 
     def upload_bits(self,app,path):
         logging.info("Compressing bits in {} for upload to app {}".format(path,app.name))
@@ -304,15 +285,17 @@ class CloudFoundryInterface(object):
         self.update_app(app,{'STATE':'STARTED'})
 
     def update_app(self,app,changes):
+        self._update_apps()
         logging.info("Updating app {}".format(app.name))
         assert isinstance(app, CloudFoundryApp)
         assert isinstance(changes,dict)
         self._put_or_exception("/v2/apps/{}?async=true".format(app.guid),data=changes)
-        self.apps = self._get_apps()
+        self._apps = self._update_apps()
 
     def create_route(self,host,domain,space):
+        self._update_routes()
         logging.info("Adding new route {} to {} in space {}".format(host,domain.name,space.name))
-        assert isinstance(host,str)
+        assert isinstance(host,(str,unicode,basestring))
         assert isinstance(domain,CloudFoundryDomain)
         assert isinstance(space,CloudFoundrySpace)
         new_route_raw = self._post_or_exception("v2/routes",
@@ -322,20 +305,21 @@ class CloudFoundryInterface(object):
                                     'space_guid': space.guid
                                }
                             )
-        self.routes = self._get_routes()
         return self.routes[new_route_raw['metadata']['guid']]
 
     def add_route_to_app(self,app,route):
+        self._update_apps()
+        self._update_routes()
         logging.info("Adding route {} to app {}".format(route.host,app.name))
         assert isinstance(app,CloudFoundryApp)
         assert isinstance(route,CloudFoundryRoute)
         response = self._put_or_exception("v2/apps/{}/routes/{}".format(app.guid,route.guid))
-        self.apps[app.guid] = CloudFoundryApp.from_dict(response['metadata'],response['entity'])
+        self._apps[app.guid] = CloudFoundryApp.from_dict(response['metadata'],response['entity'])
 
     def delete_route_from_app(self,app,route):
         logging.info("Removing route {} to app {}".format(route.host,app.name))
         assert isinstance(app,CloudFoundryApp)
         assert isinstance(route,CloudFoundryRoute)
         response = self._delete_or_exception("v2/apps/{}/routes/{}".format(app.guid,route.guid))
-        self.apps[app.guid] = CloudFoundryApp.from_dict(response['metadata'],response['entity'])
-        self.routes = self._get_routes()
+        self._apps[app.guid] = CloudFoundryApp.from_dict(response['metadata'],response['entity'])
+        self._routes = self._update_routes()
