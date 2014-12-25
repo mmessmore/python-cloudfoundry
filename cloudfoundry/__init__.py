@@ -248,10 +248,24 @@ class CloudFoundryInterface(object):
                 return route
         return None
 
-    def create_app(self,name, space_guid):
-        logging.warn("Creating new app in space {}".format(space_guid))
+    def create_app(self,name, space):
+        """
+        Creates an application
 
-        response = self._post_or_exception("v2/apps",data={'name':name, 'space_guid':space_guid})
+        :param name: Name of the application
+        :type name: str
+        :param space: space in which to create the app
+        :type space: CloudFoundrySpace
+        :return: The CloudFoundryApp object corresponding to the new app
+        :rtype: CloudFoundryApp
+        """
+        assert isinstance(space,CloudFoundrySpace)
+        logging.warn("Creating new app in space {}".format(space.guid))
+
+        if self.get_app_by_name(name) is not None:
+            return self.get_app_by_name(name)
+
+        response = self._post_or_exception("v2/apps",data={'name':name, 'space_guid':space.guid})
         metadata = response['metadata']
         app_data = response['entity']
         app = CloudFoundryApp.from_dict(metadata,app_data)
@@ -266,15 +280,23 @@ class CloudFoundryInterface(object):
         self._apps.pop(guid,None)
 
     def upload_bits(self,app,path):
+        """
+        Uploads the bits for an application, given the local path.  Creates the required zip file
+
+        :param app: The application to which we should upload the bits
+        :type app: CloudFoundryApp
+        :param path: The local path containing the bits
+        :type path: str
+        """
         logging.info("Compressing bits in {} for upload to app {}".format(path,app.name))
-        assert isinstance(path,str)
+        assert isinstance(path,(unicode,str,basestring))
         assert isinstance(app, CloudFoundryApp)
         zipdata = create_bits_zip(path)
         files_data = OrderedDict()
         files_data['resources'] = (None,'[]')
         files_data['application'] = zipdata.getvalue()
 
-        logging.debug(dict(files_data))
+        #logging.debug(dict(files_data))
 
         self._put_or_exception("v2/apps/{}/bits".format(app.guid),
                                files=files_data,
@@ -282,17 +304,42 @@ class CloudFoundryInterface(object):
                                )
 
     def start_app(self,app):
-        self.update_app(app,{'STATE':'STARTED'})
+        """
+        Convinience function to start an app
+        :param app: the application to start
+        :type app: CloudFoundryApp
+        """
+        self.update_app(app,{'state':'STARTED'})
 
     def update_app(self,app,changes):
-        self._update_apps()
+        """
+        Update any specific attribute of an app.
+        :param app: The app to update
+        :type app: CloudFoundryApp
+        :param changes: the changes to make
+        :type changes: dict
+        """
+
         logging.info("Updating app {}".format(app.name))
+        logging.debug("App changes: {}".format(changes))
         assert isinstance(app, CloudFoundryApp)
         assert isinstance(changes,dict)
-        self._put_or_exception("/v2/apps/{}?async=true".format(app.guid),data=changes)
+
+        self._put_or_exception("/v2/apps/{}".format(app.guid),data=changes)
         self._apps = self._update_apps()
 
     def create_route(self,host,domain,space):
+        """
+        Create a brand new route
+        :param host: The hostname to add
+        :type host: str
+        :param domain: The domain for the hostname (e.g. cfapps.io)
+        :type domain: CloudFoundryDomain
+        :param space: The space to which the host should belong
+        :type space: CloudFoundrySpace
+        :return: The guid for the route
+        :rtype: str
+        """
         self._update_routes()
         logging.info("Adding new route {} to {} in space {}".format(host,domain.name,space.name))
         assert isinstance(host,(str,unicode,basestring))
