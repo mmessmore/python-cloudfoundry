@@ -4,6 +4,10 @@ import zipfile
 import StringIO
 import os
 
+
+
+
+
 def create_bits_zip(path):
     buffer = StringIO.StringIO()
     zip = zipfile.ZipFile(buffer,'w')
