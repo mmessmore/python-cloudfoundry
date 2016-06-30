@@ -28,7 +28,7 @@ class CloudFoundryAuthenticationException(CloudFoundryException):
 
 class CloudFoundryInterface(object):
 
-    def __init__(self, target, username=None, password=None, debug=False):
+    def __init__(self, target, username=None, password=None, debug=False, verify=True):
         self._apps = None
         self._orgs = None
         self._spaces = None
@@ -39,47 +39,49 @@ class CloudFoundryInterface(object):
         self._target = target
         self._username = username
         self._password = password
+        self._verify = verify
         self._token = None
         self._auth_endpoint = None
 
         self._debug = debug
 
-
-
+        self._session = None
 
     def login(self):
         logging.info("Logging in to CF API {}".format(self._target))
 
-        auth_endpoint = requests.get("{}/{}".format(self._target,"v2/info"), verify=True).json()['authorization_endpoint']
+        auth_endpoint = requests.get("{}/{}".format(self._target, "v2/info"),
+                                     verify=self._verify).json()['authorization_endpoint']
 
-        login_data={
+        login_data = {
                 "grant_type": "password",
                 "password": self._password,
                 "scope": "",
                 "username": self._username
         }
-        headers =  {"Authorization": "Basic Y2Y6", "Accept": "application/json"}
-        response = requests.post("{}/{}".format(auth_endpoint,"oauth/token"), data=login_data, headers=headers, verify=True).json()
+        headers = {"Authorization": "Basic Y2Y6", "Accept": "application/json"}
+        response = requests.post("{}/{}".format(auth_endpoint, "oauth/token"), data=login_data, headers=headers, verify=self._verify).json()
         self._token = response['access_token']
         self._expires_at = int(response['expires_in']) + time.time()
 
         self._session = requests.Session()
         self._session.headers.update(self._auth_args())
 
-
         return self._token
 
     def _auth_args(self):
-        headers = {'Accept':'application/json'}
+        headers = {'Accept': 'application/json'}
         headers.update({'Authorization': 'bearer {}'.format(self._token)})
         logging.debug("Returning Final Headers: {}".format(headers))
         return headers
 
-    def _request(self, url, request_type=requests.get, data=None, verify=True, raw_data = False, files=None):
+    def _request(self, url, request_type=requests.get, data=None, verify=None, raw_data = False, files=None):
+
+        if verify is None:
+            verify = self._verify
 
         if not self.live:
             raise CloudFoundryException("Auth Required and Not Logged In")
-
 
         if data and not raw_data:
             data = json.dumps(data)

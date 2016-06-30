@@ -44,7 +44,9 @@ class CloudFoundryApp(object):
         staging_task_id='',
         state='STOPPED',
         version='',
-        metadata=None
+        metadata=None,
+        **kwargs
+
 
     ):
         self.buildpack=buildpack
@@ -76,6 +78,8 @@ class CloudFoundryApp(object):
         self.version=version
         self.guid = metadata['guid']
         self.url = metadata['url']
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 
